@@ -1,12 +1,6 @@
 import torch
 import torch.nn as nn
-    
-def softmax(vector, index):
-    exps = torch.exp(vector)
-    numerator = exps[index]
-    denominator = torch.sum(exps)
-    
-    return numerator / denominator
+from utils import softmax
 
 
 def self_attention(query, keys, values, mask=None):
@@ -15,7 +9,7 @@ def self_attention(query, keys, values, mask=None):
         
         # if batching of sentences
         if mask is not None:
-            attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
+            attn_logits = attn_logits.masked_fill(~mask, -9e15)
         
         attention = softmax(attn_logits)
         values = attention @ values
@@ -34,7 +28,7 @@ def expand_mask(mask):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, input_dim, embed_dim, num_heads):
+    def __init__(self, embed_dim, num_heads):
         super().__init__()
         assert embed_dim % num_heads == 0, "The embedding dim must be modulo the number of heads"
         
@@ -42,34 +36,62 @@ class MultiHeadAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
         
-        # Project input dims into concatenated dims of q, k, and v
-        self.qkv_proj = nn.Linear(input_dim, 3*embed_dim)
+        # Project input dims into q, k, and v
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim)
+        
         # Project embedded dim into output dim (which is input)
-        self.out_proj = nn.Linear(embed_dim, input_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
         
         # Initialize weights and biases
-        nn.init.xavier_uniform_(self.qkv_proj.weight)
-        self.qkv_proj.bias.data.fill_(0)
-        nn.init.xavier_uniform_(self.o_proj.weight)
-        self.o_proj.bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.q_proj.weight)
+        self.q_proj.bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.k_proj.weight)
+        self.k_proj.bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.v_proj.weight)
+        self.v_proj.bias.data.fill_(0)
+        nn.init.xavier_uniform_(self.out_proj.weight)
+        self.out_proj.bias.data.fill_(0)
 
 
-    def forward(self, x, mask=None):
+    def forward(self, x, kv=None, mask=None, get_attention=False):
         batch_size, seq_len, _ = x.size()
         if mask is not None:
             mask = expand_mask(mask)
         
-        # Get projection (size: [batch_size, seq_len, 3*input_dim])
-        qkv = self.qkv_proj(x)
-        
-        # Reshape to correct shape
-        qkv = qkv.reshape(batch_size, seq_len, self.num_heads, 3*self.head_dim)  # since embed_dim = num_heads × head_dim
-        
-        # Permute heads for parallel processing
-        qkv = qkv.permute(0, 2, 1, 3)  # [batch, num_heads, seq_len, 3*head_dim]
-        
-        # Get a, k, and v from last dimension of qkv
-        q, k, v = qkv.chunk(3, dim=-1)
+        # Get projection
+        if kv is None:
+            q = self.q_proj(x)
+            k = self.k_proj(x)
+            v = self.v_proj(x)
+            
+            # Reshape and permute to get correct tensor
+            q = q.reshape(batch_size, seq_len, self.num_heads, self.head_dim)
+            q = q.permute(0, 2, 1, 3)
+            
+            k = k.reshape(batch_size, seq_len, self.num_heads, self.head_dim)
+            k = k.permute(0, 2, 1, 3)
+            
+            v = v.reshape(batch_size, seq_len, self.num_heads, self.head_dim)
+            v = v.permute(0, 2, 1, 3)
+
+        else:            
+            q = self.q_proj(x)
+            k = self.k_proj(kv)
+            v = self.v_proj(kv)
+            
+            kv_seq_len = kv.size(1)
+            
+            # Reshape and permute to get correct tensor
+            q = q.reshape(batch_size, seq_len, self.num_heads, self.head_dim)
+            q = q.permute(0, 2, 1, 3)
+            
+            k = k.reshape(batch_size, kv_seq_len, self.num_heads, self.head_dim)
+            k = k.permute(0, 2, 1, 3)
+            
+            v = v.reshape(batch_size, kv_seq_len, self.num_heads, self.head_dim)
+            v = v.permute(0, 2, 1, 3)
         
         # Compute attention
         values, attention = self_attention(q, k, v, mask=mask)
@@ -79,4 +101,7 @@ class MultiHeadAttention(nn.Module):
         values = values.reshape(batch_size, seq_len, self.embed_dim)
         out = self.out_proj(values)
         
-        return out, attention
+        if get_attention:
+            return out, attention
+        
+        return out
