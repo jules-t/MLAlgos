@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from attentions import MultiHeadAttention
-from utils import softmax
 from positional_encoding import PositionalEncoding
 
 
@@ -74,26 +73,35 @@ class Transformer(nn.Module):
     def __init__(self, src_vocab_size, tgt_vocab_size, src_max_seq_len, tgt_max_seq_len, embed_dim, num_heads, dim_ffn, num_layers=2, input_dropout=0.0):
         super().__init__()
 
-        self.save_hyperparameters()
-        self.embed_scaler = torch.sqrt(embed_dim)
-        
+        # Store hyperparameters
+        self.hparams = type('HParams', (), {
+            'src_vocab_size': src_vocab_size,
+            'tgt_vocab_size': tgt_vocab_size,
+            'src_max_seq_len': src_max_seq_len,
+            'tgt_max_seq_len': tgt_max_seq_len,
+            'embed_dim': embed_dim,
+            'num_heads': num_heads,
+            'dim_ffn': dim_ffn,
+            'num_layers': num_layers,
+            'input_dropout': input_dropout
+        })()
+        self.embed_scaler = torch.sqrt(torch.tensor(embed_dim, dtype=torch.float))
+
         self._create_model()
     
 
     def _create_model(self):
         # Input Embedding
         self.input_embedding = nn.Sequential(
-            nn.Dropout(self.hparams.input_dropout),
-            nn.Embedding(self.hparams.src_vocab_size, self.hparams.embed_dim)
+            nn.Embedding(self.hparams.src_vocab_size, self.hparams.embed_dim),
+            nn.Dropout(self.hparams.input_dropout)
         )
-        self.input_embedding = self.input_embedding * self.embed_scaler
-        
+
         # Output embedding
         self.output_embedding = nn.Sequential(
-            nn.Dropout(self.hparams.input_dropout),
-            nn.Embedding(self.hparams.tgt_vocab_size, self.hparams.embed_dim)
+            nn.Embedding(self.hparams.tgt_vocab_size, self.hparams.embed_dim),
+            nn.Dropout(self.hparams.input_dropout)
         )
-        self.output_embedding = self.output_embedding * self.embed_scaler
         
         # Positional Encoding
         self.src_pe = PositionalEncoding(max_seq_len=self.hparams.src_max_seq_len, dim_model=self.hparams.embed_dim)
@@ -120,18 +128,18 @@ class Transformer(nn.Module):
     def generate_mask(self, src, tgt=None):
         # Where we have padding (value in tensor = 0) we do not compute mask
         src_mask  = (src != 0).unsqueeze(1).unsqueeze(2)  # To get acceptable shape for attention computation
-        
-        if tgt:
+
+        if tgt is not None:
             tgt_mask = (tgt != 0).unsqueeze(1).unsqueeze(3)
-            
+
             tg_seq_len = tgt.size(1)
-            
+
             # Create no look ahead target mask
-            nopeak_mask = (1 - torch.triu(torch.ones(1, tg_seq_len, tg_seq_len), diagonal=1)).bool()  # Create lower triangular matrix of bools
+            nopeak_mask = (1 - torch.triu(torch.ones(1, tg_seq_len, tg_seq_len, device=tgt.device), diagonal=1)).bool()  # Create lower triangular matrix of bools
             tgt_mask = tgt_mask & nopeak_mask
-        
+
             return src_mask, tgt_mask
-        
+
         return src_mask
 
 
@@ -140,8 +148,8 @@ class Transformer(nn.Module):
         src_mask, tgt_mask = self.generate_mask(x, y)
 
         # Go through input and output embeddings
-        x_embed = self.input_embedding(x)
-        y_embed = self.output_embedding(y)
+        x_embed = self.input_embedding(x) * self.embed_scaler
+        y_embed = self.output_embedding(y) * self.embed_scaler
 
         # Add positional encoding
         x_embed = x_embed + self.src_pe(x_embed)
@@ -166,7 +174,7 @@ class Transformer(nn.Module):
     def generate(self, x, max_new_tokens, temperature=1.0):
         # Encode source sequence once
         src_mask = self.generate_mask(x)
-        x_embed = self.input_embedding(x)
+        x_embed = self.input_embedding(x) * self.embed_scaler
         x_embed = x_embed + self.src_pe(x_embed)
 
         enc_out = x_embed
@@ -183,7 +191,7 @@ class Transformer(nn.Module):
             tgt_mask = self.generate_mask(x, generated)[1]
 
             # Embed and add positional encoding
-            y_embed = self.output_embedding(generated)
+            y_embed = self.output_embedding(generated) * self.embed_scaler
             y_embed = y_embed + self.tgt_pe(y_embed)
 
             # Decoder blocks
