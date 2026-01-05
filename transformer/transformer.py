@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from attentions import MultiHeadAttention
-from utils import softmax
+from positional_encoding import PositionalEncoding
 
 
 class FFN(nn.Module):
@@ -70,13 +70,13 @@ class Decoder(nn.Module):
 
 class Transformer(nn.Module):
     
-    def __init__(self, src_vocab_size, tgt_vocab_size, embed_dim, num_heads, dim_ffn, num_layers=2, input_dropout=0.0):
+    def __init__(self, src_vocab_size, tgt_vocab_size, src_max_seq_len, tgt_max_seq_len, embed_dim, num_heads, dim_ffn, num_layers=2, input_dropout=0.0):
         super().__init__()
 
         self.save_hyperparameters()
         self.embed_scaler = torch.sqrt(embed_dim)
         
-        self.model = _create_model()
+        self._create_model()
     
 
     def _create_model(self):
@@ -93,6 +93,10 @@ class Transformer(nn.Module):
             nn.Embedding(self.hparams.tgt_vocab_size, self.hparams.embed_dim)
         )
         self.output_embedding = self.output_embedding * self.embed_scaler
+        
+        # Positional Encoding
+        self.src_pe = PositionalEncoding(max_seq_len=self.hparams.src_max_seq_len, dim_model=self.hparams.embed_dim)
+        self.tgt_pe = PositionalEncoding(max_seq_len=self.hparams.tgt_max_seq_len, dim_model=self.hparams.embed_dim)
         
         # Encoder and Decoder
         self.full_encoder = nn.ModuleList([Encoder(
@@ -125,5 +129,34 @@ class Transformer(nn.Module):
         
         return src_mask, tgt_mask
 
-    def forward(self, x, ):
+
+    def train(self, x, y):
+        # Get masks first (needs token IDs, not embeddings)
+        src_mask, tgt_mask = self.generate_mask(x, y)
+
+        # Go through input and output embeddings
+        x_embed = self.input_embedding(x)
+        y_embed = self.output_embedding(y)
+
+        # Add positional encoding
+        x_embed = x_embed + self.src_pe(x_embed)
+        y_embed = y_embed + self.tgt_pe(y_embed)
+
+        # Encoder blocks - loop through each layer
+        enc_out = x_embed
+        for enc_layer in self.full_encoder:
+            enc_out = enc_layer(enc_out, mask=src_mask)
+
+        # Decoder blocks - loop through each layer
+        dec_out = y_embed
+        for dec_layer in self.full_decoder:
+            dec_out = dec_layer(dec_out, enc_mask=src_mask, enc_output=enc_out, dec_mask=tgt_mask)
+
+        # Apply linear layer (return logits, no softmax)
+        out = self.linear(dec_out)
+
+        return out
+    
+    
+    def generate(self, x, mask, pe):
         pass
