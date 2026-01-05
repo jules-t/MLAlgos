@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from attentions import MultiHeadAttention
+from utils import softmax
 from positional_encoding import PositionalEncoding
 
 
@@ -116,18 +117,22 @@ class Transformer(nn.Module):
         self.linear = nn.Linear(self.hparams.embed_dim, self.hparams.tgt_vocab_size)
 
 
-    def generate_mask(self, src, tgt):
+    def generate_mask(self, src, tgt=None):
         # Where we have padding (value in tensor = 0) we do not compute mask
         src_mask  = (src != 0).unsqueeze(1).unsqueeze(2)  # To get acceptable shape for attention computation
-        tgt_mask = (tgt != 0).unsqueeze(1).unsqueeze(3)
         
-        tg_seq_len = tgt.size(1)
+        if tgt:
+            tgt_mask = (tgt != 0).unsqueeze(1).unsqueeze(3)
+            
+            tg_seq_len = tgt.size(1)
+            
+            # Create no look ahead target mask
+            nopeak_mask = (1 - torch.triu(torch.ones(1, tg_seq_len, tg_seq_len), diagonal=1)).bool()  # Create lower triangular matrix of bools
+            tgt_mask = tgt_mask & nopeak_mask
         
-        # Create no look ahead target mask
-        nopeak_mask = (1 - torch.triu(torch.ones(1, tg_seq_len, tg_seq_len), diagonal=1)).bool()  # Create lower triangular matrix of bools
-        tgt_mask = tgt_mask & nopeak_mask
+            return src_mask, tgt_mask
         
-        return src_mask, tgt_mask
+        return src_mask
 
 
     def train(self, x, y):
@@ -158,5 +163,47 @@ class Transformer(nn.Module):
         return out
     
     
-    def generate(self, x, mask, pe):
-        pass
+    def generate(self, x, max_new_tokens, temperature=1.0):
+        # Encode source sequence once
+        src_mask = self.generate_mask(x)
+        x_embed = self.input_embedding(x)
+        x_embed = x_embed + self.src_pe(x_embed)
+
+        enc_out = x_embed
+        for enc_layer in self.full_encoder:
+            enc_out = enc_layer(enc_out, mask=src_mask)
+
+        # Initialize with start token (assuming token ID 1 is <BOS>)
+        batch_size = x.size(0)
+        generated = torch.ones((batch_size, 1), dtype=torch.long, device=x.device)
+
+        # Autoregressive generation loop
+        for _ in range(max_new_tokens):
+            # Generate mask for current sequence
+            tgt_mask = self.generate_mask(x, generated)[1]
+
+            # Embed and add positional encoding
+            y_embed = self.output_embedding(generated)
+            y_embed = y_embed + self.tgt_pe(y_embed)
+
+            # Decoder blocks
+            dec_out = y_embed
+            for dec_layer in self.full_decoder:
+                dec_out = dec_layer(dec_out, enc_mask=src_mask, enc_output=enc_out, dec_mask=tgt_mask)
+
+            # Get logits for next token (only need last position)
+            logits = self.linear(dec_out[:, -1, :])
+
+            # Apply temperature and sample/select next token
+            if temperature == 0.0:
+                # Greedy decoding
+                next_token = torch.argmax(logits, dim=-1, keepdim=True)
+            else:
+                # Temperature sampling
+                probs = torch.softmax(logits / temperature, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+
+            # Append to generated sequence
+            generated = torch.cat([generated, next_token], dim=1)
+ 
+        return generated
