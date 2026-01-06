@@ -1,0 +1,43 @@
+{
+  "model": {
+    "src_vocab_size": 10000,
+    "tgt_vocab_size": 10000,
+    "src_max_seq_len": 512,
+    "tgt_max_seq_len": 512,
+    "embed_dim": 256,
+    "num_heads": 8,
+    "dim_ffn": 1024,
+    "num_layers": 4,
+    "input_dropout": 0.1
+  },
+  "training": {
+    "batch_size": 32,
+    "num_epochs": 100,
+    "learning_rate": 0.0001,
+    "warmup_steps": 4000,
+    "max_lr": 0.0005,
+    "weight_decay": 0.01,
+    "gradient_clip": 1.0,
+    "label_smoothing": 0.1,
+    "save_every": 5,
+    "checkpoint_dir": "./checkpoints",
+    "val_split": 0.1,
+    "val_every": 1,
+    "log_dir": "./logs",
+    "log_every": 100,
+    "device": "cuda"
+  },
+  "data": {
+    "data_path": "./data",
+    "dataset_type": "parallel",
+    "src_file": "src.txt",
+    "tgt_file": "tgt.txt",
+    "vocab_file": "vocab.json",
+    "tokenizer_type": "char",
+    "min_freq": 2,
+    "pad_token": "<PAD>",
+    "bos_token": "<BOS>",
+    "eos_token": "<EOS>",
+    "unk_token": "<UNK>"
+  }
+}
