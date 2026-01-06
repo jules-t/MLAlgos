@@ -29,7 +29,7 @@ class Encoder(nn.Module):
         self.layernorm2 = nn.LayerNorm(embed_dim)
     
     def forward(self, x, mask=None):
-        attn_out = self.multi_head_attention(x, mask)
+        attn_out = self.multi_head_attention(x, mask=mask)
         x = x + self.dropout(attn_out)
         x = self.layernorm1(x)
         
@@ -143,7 +143,7 @@ class Transformer(nn.Module):
         return src_mask
 
 
-    def train(self, x, y):
+    def forward(self, x, y):
         # Get masks first (needs token IDs, not embeddings)
         src_mask, tgt_mask = self.generate_mask(x, y)
 

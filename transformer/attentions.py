@@ -1,18 +1,21 @@
 import torch
 import torch.nn as nn
-from utils import softmax
 
 
 def self_attention(query, keys, values, mask=None):
-        attn_logits = query @ keys.T
-        attn_logits = attn_logits / query.size()[-1]
-        
-        # if batching of sentences
+        # Compute scaled dot-product attention
+        d_k = query.size(-1)
+        attn_logits = torch.matmul(query, keys.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=torch.float))
+
+        # Apply mask if provided
         if mask is not None:
-            attn_logits = attn_logits.masked_fill(~mask, -9e15)
-        
-        attention = softmax(attn_logits)
-        values = attention @ values
+            attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
+
+        # Apply softmax to get attention weights
+        attention = torch.nn.functional.softmax(attn_logits, dim=-1)
+
+        # Apply attention to values
+        values = torch.matmul(attention, values)
 
         return values, attention
     
