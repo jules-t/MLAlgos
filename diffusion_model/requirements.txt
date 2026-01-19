@@ -1,0 +1,8 @@
+# DDPM Dependencies
+# TODO: Add specific versions after testing
+torch
+torchvision
+numpy
+matplotlib
+tqdm
+pyyaml
